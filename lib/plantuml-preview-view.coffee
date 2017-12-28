@@ -140,9 +140,14 @@ class PlantumlPreviewView extends ScrollView
   onDidChangeModified: ->
     new Disposable()
 
+  ###
+  Adds images (and file paths, if configured) to plantuml window
+  ###
   addImages: (imgFiles, time) ->
     @container.empty()
+
     displayFilenames = atom.config.get('plantuml-preview.displayFilename')
+
     for file in imgFiles
       if displayFilenames
         div = $('<div/>')
@@ -150,8 +155,10 @@ class PlantumlPreviewView extends ScrollView
           .attr('file', file)
           .text("#{file}")
         @container.append div
+
       imageInfo = @imageInfo
       zoomToFit = @zoomToFit.is(':checked')
+
       img = $('<img/>')
         .attr('src', "#{file}?time=#{time}")
         .attr('file', file)
@@ -244,79 +251,78 @@ class PlantumlPreviewView extends ScrollView
 
     filenames
 
-  renderUml: ->
-    path ?= require 'path'
-    fs ?= require 'fs-plus'
-    os ?= require 'os'
+  ###
+  Renders the plantuml source in file located at 'filePath' and generates
+  output files in directory 'directory'.
 
-    filePath = @editor.getPath()
-    basename = path.basename(filePath, path.extname(filePath))
-    directory = path.dirname(filePath)
-    format = @outputFormat.val()
+  The format of the output files is set to 'format'.
+  ###
+  renderUmlLocal: (filePath, directory, format, imgFiles) ->
+    console.log("Rendering using Plant UML Local Jar File")
+
+    # retrieve and check config settings
     settingError = false
 
-    if @useTempDir.is(':checked')
-      directory = path.join os.tmpdir(), 'plantuml-preview'
-      if !fs.existsSync directory
-        fs.mkdirSync directory
-
-    imgFiles = @getFilenames directory, basename, '.' + format, @editor.getText()
-
-    upToDate = true
-    fileTime = fs.statSync(filePath).mtime
-    for image in imgFiles
-      if fs.isFileSync(image)
-        if fileTime > fs.statSync(image).mtime
-          upToDate = false
-          break
-      else
-        upToDate = false
-        break
-    if upToDate
-      @removeImages()
-      @addImages imgFiles, Date.now()
-      return
-
+    # check command setting
     command = atom.config.get 'plantuml-preview.java'
     if (command != 'java') and (!fs.isFileSync command)
       settingsError "#{command} is not a file.", 'Java Executable', command
       settingError = true
+
+    # check jarLocation setting
     jarLocation = atom.config.get 'plantuml-preview.jarLocation'
     if !fs.isFileSync jarLocation
       settingsError "#{jarLocation} is not a file.", 'PlantUML Jar', jarLocation
       settingError = true
+
+    # check dotLocation setting
     dotLocation = atom.config.get('plantuml-preview.dotLocation')
     if dotLocation != ''
       if !fs.isFileSync dotLocation
         settingsError "#{dotLocation} is not a file.", 'Graphvis Dot Executable', dotLocation
         settingError = true
 
+    # if there is an error in the settings, display
     if settingError
       @container.empty()
       @container.show
       return
 
     args = ['-Djava.awt.headless=true']
+
     javaAdditional = atom.config.get('plantuml-preview.javaAdditional')
     if javaAdditional != ''
       args.push javaAdditional
+
     args.push '-jar', jarLocation
+
     jarAdditional = atom.config.get('plantuml-preview.jarAdditional')
     if jarAdditional != ''
       args.push jarAdditional
+
     args.push '-charset', @editor.getEncoding()
+
     if format == 'svg'
       args.push '-tsvg'
+
     if dotLocation != ''
       args.push '-graphvizdot', dotLocation
-    args.push '-output', directory, filePath
+
+    # set output directory for generated files
+    args.push '-output', directory
+
+    # set input file with plantuml source as last parameter
+    args.push filePath
 
     outputlog = []
     errorlog = []
 
+    # preparation for plantuml process execution
+    # define exit handler
     exitHandler = (files) =>
       for file in files
         if fs.isFileSync file
+          # beautify svg files if option set
           if atom.config.get('plantuml-preview.beautifyXml') and (format == 'svg')
             beautify_html ?= require('js-beautify').html
             buffer = fs.readFileSync(file, @editor.getEncoding())
@@ -324,18 +330,25 @@ class PlantumlPreviewView extends ScrollView
             fs.writeFileSync(file, buffer, {encoding: @editor.getEncoding()})
         else
           console.log("File not found: #{file}")
+
+      # add generated images to plantuml window
       @addImages(files, Date.now())
+
+      # print errors if there are any
       if errorlog.length > 0
         str = errorlog.join('')
         if str.match ///jarfile///i
           settingsError str, 'PlantUML Jar', jarLocation
         else
           console.log "plantuml-preview: stderr\n#{str}"
+
+      #
       if outputlog.length > 0
         str = outputlog.join('')
         atom.notifications.addInfo "plantuml-preview: stdout (logged to console)", detail: str, dismissable: true
         console.log "plantuml-preview: stdout\n#{str}"
 
+    # define handlers for BufferedProcess
     exit = (code) ->
       exitHandler imgFiles
     stdout = (output) ->
@@ -346,6 +359,82 @@ class PlantumlPreviewView extends ScrollView
       object.handle()
       settingsError "#{command} not found.", 'Java Executable', command
 
+    # clear plantuml window
     @removeImages()
+
+    # execute plantuml process
     console.log("#{command} #{args.join ' '}")
     new BufferedProcess({command, args, stdout, stderr, exit}).onWillThrowError errorHandler
+
+  renderUmlServer: (filePath, directory, format, imgFiles) ->
+    console.log("Rendering using Plant UML Server")
+    return
+    # retrieve and check config settings
+    settingError = false
+
+    # check command setting
+    plantUMLServerURL = atom.config.get 'plantuml-preview.plantUMLServerURL'
+    if (plantUMLServerURL == '')
+      settingsError "plantUMLServerURL must not be empte.", 'PlantUMLServer URL', plantUMLServerURL
+      settingError = true
+
+    # if there is an error in the settings, display
+    if settingError
+      @container.empty()
+      @container.show
+      return
+
+  renderUml: ->
+    path ?= require 'path'
+    fs ?= require 'fs-plus'
+    os ?= require 'os'
+
+    filePath = @editor.getPath()
+    basename = path.basename(filePath, path.extname(filePath))
+    directory = path.dirname(filePath)
+    format = @outputFormat.val()
+    renderer = atom.config.get('plantuml-preview.renderer')
+
+    if @useTempDir.is(':checked')
+      directory = path.join os.tmpdir(), 'plantuml-preview'
+      if !fs.existsSync directory
+        fs.mkdirSync directory
+
+    # determine the names of the image files to display from the plantuml source text
+    imgFiles = @getFilenames directory, basename, '.' + format, @editor.getText()
+
+    # check whether existing rendered images are up to date
+    upToDate = true
+    fileTime = fs.statSync(filePath).mtime
+    for image in imgFiles
+      if fs.isFileSync(image)
+        if fileTime > fs.statSync(image).mtime
+          upToDate = false
+          break
+      else
+        upToDate = false
+        break
+
+    # everything is up to date, no need do render plantuml, just show existing files
+    if upToDate
+      @removeImages()
+      @addImages imgFiles, Date.now()
+      return
+
+    ## something is out of date, re-render required
+    if renderer == "Local"
+      @renderUmlLocal(filePath, directory, format, imgFiles)
+    else if renderer == "PlantUMLServer"
+      @renderUmlServer(filePath, directory, format, imgFiles)
+    else
+      console.error("'#{renderer}' is not a valid renderer. This should never happen unless someone changes the code.")
+      return
+
+    ###
+    TODO:
+    here we should do the following generic things independent of the rendering method:
+    * beautify svg files if the option is set
+    * add the generated images to the plantuml window using @addImages()
+    * print errors occurred during rendering if there are any
+    * print other outputs produced by the rendering process if there are any
+    ###

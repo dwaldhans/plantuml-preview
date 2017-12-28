@@ -90,6 +90,15 @@ module.exports =
       type: 'string'
       default: 'svg'
       enum: ['png', 'svg']
+    renderer:
+      type: 'string'
+      default: 'Local'
+      enum: ['Local', 'PlantUMLServer']
+    plantUMLServerURL:
+      title: 'PlantUMLServer URL'
+      description: 'URL to PlantUMLServer'
+      type: 'string'
+      default: 'localhost:8080'
     beautifyXml:
       title: 'Beautify XML'
       description: 'Use js-beautify on XML when copying and generating SVG diagrams.'
